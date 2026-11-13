@@ -1,0 +1,42 @@
+server:
+  port: {{port}}
+
+spring-doc:
+  swagger-ui:
+    doc-expansion: none
+    operationsSorter: alpha
+    tagsSorter: alpha
+
+spring:
+  application:
+    name: {{service-name}}
+  security:
+    oauth2:
+      resource-server:
+        jwt:
+          issuer-uri: http://auth.nsight.local:8080/realms/nSight
+# @persistence:start
+  liquibase:
+    enabled: true
+    change-log: classpath:/liquibase/changelog.xml
+    # Must be overridden in production with the value "pro".
+    contexts: dev,test
+
+database:
+  name: {{db}}
+  readwrite:
+    url: jdbc:postgresql://database.nsight.local:5432/{{db}}
+    username: {{db}}_app
+    password: {{db}}_app
+    driver-class-name: org.postgresql.Driver
+  readonly:
+    url: jdbc:postgresql://database.nsight.local:5432/{{db}}
+    username: {{db}}_app
+    password: {{db}}_app
+    driver-class-name: org.postgresql.Driver
+# @persistence:end
+
+# One entry per downstream service, added by the bootstrapper:
+#   <name>:
+#     base-uri: "http://<name>.nsight.local:<port>/<prefix>/"
+client: {}

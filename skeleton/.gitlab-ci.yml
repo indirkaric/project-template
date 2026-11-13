@@ -1,0 +1,111 @@
+# image: maven:3.9.9-amazoncorretto-17-alpine
+image: ${ECR_PULL_CACHE}/library/maven:3.9.9-amazoncorretto-17-alpine
+
+default:
+  interruptible: true  # newer commit on the same ref cancels stale running jobs;
+                        # deploy/release jobs override this back to false below
+
+stages:
+  - test
+  - build
+  - manifest
+  - security
+  - create-release
+  - update-service
+
+include:
+  - template: Security/Secret-Detection.gitlab-ci.yml
+  - template: Security/SAST.gitlab-ci.yml
+  - project: 'sqa-gitlab/gitlab-templates'
+    ref: 'main'
+    file:
+      - Backend/Java/codeartifact-login.yml
+      - Backend/Java/checkstyle-and-test.yml
+      - Backend/Java/test-liquibase-rollback.yml
+      - Backend/Java/build.yml
+      - Backend/Java/sonarqube-check.yml
+      - Artifacts/build-and-push-docker-image.yml
+      - Artifacts/build-and-push-multiarch-docker-image.yml
+      - Security/container-scanning-from-registry.yml
+      - Security/semgrep-sast-with-junit.yml
+      - Security/secret-detection.yml
+      - AWS/update-service.yml
+      - Azure/update-service.yml
+      - Docs/create-release.yml
+      - Service/{{service-name}}/all-environments.yml
+
+variables:
+  CI_REGISTRY_IMAGE: $SQA_AWS_ACCOUNT_ID.dkr.ecr.$SQA_AWS_DEFAULT_REGION.amazonaws.com/genie-{{service-name}}
+  SAST_JAVA_VERSION: 17
+  BUILD_ARTIFACTS_DIRECTORY: .
+  DOCKER_IMAGE_NAME: "genie-{{service-name}}"
+  DOCKERFILE_NAME: Dockerfile
+  CONTAINER_SCANNING_ENABLED: "true"
+  CONTAINER_REGISTRIES: "AWS AZURE"  # {{service-name}} pushes to AWS ECR and the azure-demo-2 ACR
+
+liquibase-testing-rollback:
+  extends: .liquibase-testing-rollback
+  stage: test
+  variables:
+    POSTGRES_DB: "{{db}}"
+    POSTGRES_USER: "{{db}}_app"
+    POSTGRES_PASSWORD: "{{db}}_app"
+
+# build-and-push-amd64 needs this job's jar on every branch/tag pipeline, so
+# it must run under the same condition — it has no rules of its own
+# otherwise, which would exclude it from some pipeline sources that
+# build-and-push-amd64 doesn't exclude, breaking the needs: reference.
+build:
+  rules:
+    - if: '$CI_COMMIT_BRANCH || $CI_COMMIT_TAG'
+
+# x86_64 build — native docker build, pushes to AWS ECR + Azure ACR.
+# Runs on every branch/tag (not just deploy branches) so e2e-test always has
+# an image to pull; non-deploy branches get a branch-name+SHA tag via the
+# template's script (no floating latest/staging/production tag is touched).
+build-and-push-amd64:
+  extends: .build-and-push-docker-image
+  variables:
+    FF_NETWORK_PER_BUILD: "true"
+    ACR_CLIENT_ID: $AZURE_DEMO_2_CLIENT_ID
+    ACR_CLIENT_SECRET: $AZURE_DEMO_2_CLIENT_SECRET
+    AZURE_TENANT_ID: $AZURE_DEMO_2_TENANT_ID
+  needs:
+    - job: build
+      artifacts: true
+  rules:
+    - if: '$CI_COMMIT_BRANCH || $CI_COMMIT_TAG'
+
+# arm64 build — cross-platform via buildx + QEMU (runs in parallel with amd64)
+build-and-push-arm64:
+  extends: .build-and-push-multiarch-docker-image
+  variables:
+    FF_NETWORK_PER_BUILD: "true"
+    DOCKER_PLATFORM: linux/arm64
+    IMAGE_TAG_SUFFIX: "-arm64"
+    ACR_CLIENT_ID: $AZURE_DEMO_2_CLIENT_ID
+    ACR_CLIENT_SECRET: $AZURE_DEMO_2_CLIENT_SECRET
+    AZURE_TENANT_ID: $AZURE_DEMO_2_TENANT_ID
+  needs:
+    - job: build
+      artifacts: true
+
+# Manifest list — waits for both arches, replaces canonical tags with multiarch
+create-multiarch-manifest:
+  extends: .create-multiarch-manifest
+  stage: manifest
+  variables:
+    ACR_CLIENT_ID: $AZURE_DEMO_2_CLIENT_ID
+    ACR_CLIENT_SECRET: $AZURE_DEMO_2_CLIENT_SECRET
+    AZURE_TENANT_ID: $AZURE_DEMO_2_TENANT_ID
+  needs: [build-and-push-amd64, build-and-push-arm64]
+
+container-scanning:
+  extends: .container_scanning_from_registry
+  stage: security
+  allow_failure: true
+  needs: [build-and-push-amd64]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == "staging"'
+    - if: '$CI_COMMIT_BRANCH == "production"'

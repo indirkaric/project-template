@@ -1,122 +1,80 @@
 # CLAUDE.md — {{ServiceName}}
 
-> **Fill these in before using this template**, then delete this note:
-> `{{ServiceName}}` (e.g. `OrderService`), `{{service-name}}` (kebab-case,
-> e.g. `order-service`), `{{Domain}}`/`{{domain}}` (e.g. `Order`/`order`,
-> your first domain module), `{{port}}`, `{{schema}}` (Postgres schema
-> name). Find/replace all four across this file and the files under
-> `.claude/`.
+> **Fill these in** — only when setting this template up by hand; `scripts/new_service.py` fills
+> them and removes this note: `{{ServiceName}}`, `{{service-name}}`, `{{Domain}}`/`{{domain}}`,
+> `{{port}}`, `{{schema}}`, `{{api-prefix}}`, `{{coverage}}`.
 
-## What this is
+Spring Boot 3.2 / Java 17 microservice, one per repo. The architecture below is
+**non-negotiable**; each layer's detail lives in one skill (table at the end), loaded only when
+that layer is touched. Where the reference services (`identity`, `artifact`) disagree, the
+stricter rule wins — deviate only after calling it out.
 
-Spring Boot 3.2+ / Java 17 microservice, one service per repo. This file
-defines a **non-negotiable** architecture. The detailed rule for each
-layer lives in its own skill under `.claude/skills/` (see table below) —
-loaded only when that layer is actually being touched — so this file
-stays a short index, not the full rulebook.
+## Package layout
 
-This template encodes two sources, reconciled on purpose: a proven
-layered-domain-service convention (package layout, `Check` defensive
-checks, exception mapping, test style), and a verified inter-service
-identity-propagation mechanism (`Sqa-Client-Id` / `Sqa-user-id` /
-`Sqa-Request-Id`, the 3-tier auth filter chain, `IScopeContext`)
-extracted from five real production microservices. Where those real
-services disagreed with each other or with the baseline, the skills pick
-the **stricter** rule, not a copy-paste of every real-world
-inconsistency. Don't deviate from either without calling it out first.
-
-## Package layout (per domain module, e.g. "{{domain}}", "product", "user")
+Entities, repositories, mappers and DTOs are root-level and shared; a module holds exactly three
+things. Every package has a `package-info.java`. Spell `config/` and `annotations/` this way.
 
 ```
-entity/<Entity>.java                          JPA entity
-
+entity/<Entity>.java  entity/common/  entity/listener/BaseEntityListener
+repository/I<Domain>Repository + impl/<Domain>Repository + projection/<Domain>Projection
+mapper/I<Domain>Mapper                         MapStruct
+dto/<Domain>DTO  dto/response/EntityCreatedResponse
+service/<domain>/I<Verb><Domain>Service + impl/     ONE interface per operation
+service/validator/I<Verb><Domain>ServiceValidator + impl/   + Base<Domain>DataValidator
+service/security/  service/bean/  service/audit/
+client/BaseClient  client/<downstream>/<Downstream>Client
+config/  security/  exception/  constants/  util/  db/config|model|constants
 modules/<domain>/
-  <Domain>Controller.java                     REST layer
+  <Domain>Controller
   model/                                       API request/response records
-  dto/                                         internal DTOs built off projections
-  mapper/I<Domain>Mapper.java                  MapStruct
-  repository/I<Domain>Repository.java          domain-facing repository contract
-  repository/impl/<Domain>Repository.java      Spring Data JPA backed impl
-  repository/projection/<Domain>Projection.java read-path projections
-  service/I<Verb><Domain>ResponseCreatorService.java + impl/
-                                                composes core service(s) + mapper
-                                                into the final API response
-
-service/<domain>/I<Verb><Domain>Service.java + impl/
-                                                ONE interface PER OPERATION —
-                                                never one fat "<Domain>Service"
-                                                god class for everything
-
-service/validator/I<Verb><Domain>ServiceValidator.java + impl/
-                                                one validator per write
-                                                operation, sharing rules via a
-                                                Base<Domain>DataValidator
-
-event/<Domain>ChangeEvent + <Domain>EventListener               OPTIONAL —
-                                                see domain-events-conventions
-                                                skill.
+  service/I<Verb><Domain>ResponseCreatorService + impl/
+event/                                         optional, see domain-events-conventions
 ```
 
-Rule of thumb: the Controller depends ONLY on `*ResponseCreatorService`
-interfaces (plus a bare operation service for operations with no response
-body, like delete). It never imports a `Repository`, an `Entity`, or a
-MapStruct mapper directly. A pure proxy/BFF module (no local persistence)
-follows a different variant — see the `proxy-bff-conventions` skill.
+The Controller depends only on `*ResponseCreatorService` (or a bare operation service for a
+body-less operation like delete) — never on a repository, entity, mapper or internal DTO. A
+module without local persistence follows `proxy-bff-conventions`.
 
-## Defensive checks — non-negotiable
+## Non-negotiable
 
-Call the `Check` utility (`Check.isNotNull`, `Check.isNotEmpty`) at the
-start of every constructor (once per injected dependency) and the start
-of every public method (once per parameter) — in Controllers, Services,
-Validators, ResponseCreatorServices, client wrapper classes, and filters
-alike. A missing `Check` call on a new public method/constructor is a
-review blocker, not a style nit.
+- **`Check`** (`Check.isNotNull`/`isNotEmpty`) first in every constructor (per dependency) and
+  every public method (per parameter) — controllers, services, validators, clients, filters.
+  A missing call is a review blocker.
+- **Nothing proxied is `final`**: controller methods (`@PreAuthorize`) and `@Transactional`
+  classes are CGLIB-proxied; `final` breaks them on live traffic only.
+- **Tests ship with the change**; `mvn -o verify` runs them plus the JaCoCo gate
+  (`{{coverage}}` instruction coverage) and checkstyle.
+- **Checkstyle** (`src/main/resources/checkstyle/`, from identity — the stricter one): Javadoc
+  on public members, `Designed for extension.` in the Javadoc of overridable public methods,
+  `final` parameters, 60-line methods, 120-char lines, a blank line after a closing `}` unless
+  `else`/`catch`/`finally`/`}` follows, no star imports, no magic numbers.
+- **Comments** only for a non-obvious reason, never narrating the next line.
 
-## Comments
-
-Minimal. A comment is only for a non-obvious business rule a reader could
-not infer from the code. Never a comment that restates what the next
-line does.
-
-## Checkstyle
-
-`src/main/resources/checkstyle/checkstyle.xml` — run `mvn checkstyle:check`
-before considering a change done.
-
-## Conventions by layer — see these skills for full detail
+## Skills
 
 | Skill | Covers |
 |---|---|
-| `entity-and-liquibase-conventions` | JPA entities, audit fields, Liquibase changesets |
-| `repository-conventions` | `I<Domain>Repository` + impl + projections |
-| `service-layer-conventions` | Operation services, validators, ResponseCreatorService, mapper, dto vs model |
-| `controller-conventions` | REST controller rules, status codes, the `final`-method gotcha |
-| `exception-handling-conventions` | Exception types, `GlobalExceptionHandler`, status mapping |
-| `testing-conventions` | JUnit/Mockito/AssertJ style, coverage expectations |
-| `inter-service-propagation` | Inbound auth filters, `IScopeContext`, outbound `Sqa-*` headers |
-| `proxy-bff-conventions` | Orchestration/BFF modules with no local persistence |
-| `domain-events-conventions` | Optional Kafka local-event + AFTER_COMMIT pattern |
-
-These auto-trigger by description when you're working on that layer; you
-can also invoke one directly (`/skill-name`) or just ask for it.
+| `entity-and-liquibase-conventions` | entities, audit fields, Liquibase, datasource routing |
+| `repository-conventions` | repository contract, impl, projections |
+| `service-layer-conventions` | operation services, validators, ResponseCreatorService, mapper, dto vs model |
+| `controller-conventions` | endpoints, status codes, response shapes |
+| `exception-handling-conventions` | exception types and HTTP mapping |
+| `testing-conventions` | test style and coverage |
+| `inter-service-propagation` | auth filters, `IScopeContext`, outbound headers, `platform.md` registry |
+| `proxy-bff-conventions` | modules that only compose other services |
+| `domain-events-conventions` | optional Kafka pattern |
+| `new-crud-module` / `new-proxy-module` | ordered checklists for a new module |
 
 ## Agent behavior
 
-This section applies to every agent/subagent/skill working in this repo.
-Subagents don't automatically inherit this file the way the main session
-does — each agent's own prompt must tell it to read `CLAUDE.md` in full
-before doing anything else, plus the specific skill file(s) for the
-layer(s) it touches (subagents can't invoke skills themselves — they
-`Read` the `.claude/skills/<name>/SKILL.md` file directly instead). If
-you're writing a new agent, include that instruction explicitly rather
-than assuming it.
-
-- **Language**: respond to the user in Bosnian — explanations, status
-  updates, questions, review reports, final summaries. Code, Javadoc,
-  comments, and commit messages stay in English, as elsewhere in this
-  file.
-- **Editing**: agents here may edit files directly (`Write`/`Edit`) —
-  print-the-diff-and-ask-permission policies from other, stricter repos
-  do not apply here unless this project later adopts one explicitly.
-- **Git/infra**: no agent runs `git commit`, `git push`, or
-  Docker/infra-destroying commands without being explicitly asked.
+- **Language**: everything said to the user is Bosnian; code, Javadoc, comments, commits English.
+- **Subagents** don't inherit this file: every agent prompt starts by reading it plus the skill
+  files it needs (`Read .claude/skills/<name>/SKILL.md` — subagents can't invoke skills).
+- **Other services** are known only from `.claude/skills/inter-service-propagation/platform.md`.
+  Never read a sibling repo; if the registry lacks something, ask.
+- **Git/infra**: no commit, push, `docker` or stack changes unless the user asks.
+- **Subagents can't ask the user.** They end with one block and the main session acts on it:
+  - `## TREBA ODLUKA` — blocked: the question, 2–3 options with consequences; nothing edited.
+  - `## KLASE ZA TESTOVE` — every code-writing agent: `src/main/java/…/X.java — what to cover`.
+  - `## VERDIKT: APPROVE | WARNING | BLOCK` — last line of every review agent (`BLOCK` = a
+    non-negotiable rule broken, `WARNING` = style/Javadoc/missing test, `APPROVE` = clean).

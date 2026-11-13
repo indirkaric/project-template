@@ -1,59 +1,63 @@
 # project-template
 
-Reusable Claude Code setup (architecture rules + agents + skills) for
-starting a new Spring Boot 3.2+ / Java 17 microservice from zero, with a
-non-negotiable layered architecture and a verified inter-service identity
-propagation mechanism baked in from day one.
+Starting point for a new nSight/Genie Spring Boot 3.2 / Java 17 microservice:
+a verified code skeleton, the architecture rules, and the Claude agents and skills that build on
+them. `identity` and `artifact` are the reference services. They were distilled into `skeleton/`
+once (provenance: [REFERENCE.md](REFERENCE.md)), so nothing here reads them again.
 
-This is **not** a buildable project itself — it's a stamp to copy into a
-new, empty repo.
+## New service — let Claude do it
 
-## How to use it for a new project
+Open Claude Code in this directory and say, e.g.:
 
-1. Create (or clone into) a new, empty repo for the new service.
-2. Copy `CLAUDE.md` and the whole `.claude/` folder from this template into
-   that repo's root.
-3. Open `CLAUDE.md` and find/replace every placeholder:
-   - `{{ServiceName}}` — PascalCase service name, e.g. `PaymentService`
-   - `{{service-name}}` — kebab-case, e.g. `payment-service`
-   - `{{Domain}}` / `{{domain}}` — your first domain module, e.g.
-     `Payment` / `payment`
-   - `{{port}}` — the service's port
-   - `{{schema}}` — its Postgres schema name
-4. Open Claude Code in that new repo and just describe what you want:
-   - "Scaffold a `<Domain>` module" → triggers `service-creator` /
-     the `new-crud-module` skill.
-   - "Add the entity and repository for `<Domain>`, nothing else yet" →
-     `database-service-creator`.
-   - "Add a proxy endpoint that calls X and Y and combines them" →
-     `proxy-service-creator` / the `new-proxy-module` skill.
-   - "Review what I just wrote" → `code-reviewer`.
-   - "Check the header propagation on the new client" →
-     `integration-flow-auditor`.
-   - "Write tests for X" → `test-writer`.
+> napravi mi dva mikroservisa, `invoice` (vlastita baza, zove identity) i `report` (proxy nad
+> artifactom), i vodi se identity i artifact servisom
 
-`CLAUDE.md` itself is kept short on purpose — the full rule for each
-layer (entities, repositories, controllers, exceptions, tests,
-inter-service propagation, proxy/BFF, optional Kafka events) lives in its
-own skill under `.claude/skills/`, listed in `CLAUDE.md`'s "Conventions
-by layer" table. Those load automatically when you're actually working
-on that layer instead of being read in full every time.
+or `/new-microservice invoice:persistence:identity report:proxy:artifact`. The skill confirms
+the spec once and then:
 
-## Where this came from
+1. runs `scripts/new_service.py` per service. That creates `../<name>/` from `skeleton/`, fills
+   CLAUDE.md + `.claude/`, wires the downstream base URIs and client ids, registers the port in
+   `platform.md`, and writes `PLATFORM_CHANGES.md`;
+2. builds the first module (`service-creator` / `proxy-service-creator`);
+3. writes the tests (`test-writer`) and runs `mvn -o verify`;
+4. reviews with `code-reviewer` + `integration-flow-auditor`;
+5. reports, and offers to apply `PLATFORM_CHANGES.md` (DB, compose, hosts, callee allowlists,
+   workspace docs). That file edits other repos, so it is applied only on your yes.
 
-`CLAUDE.md` and its skills combine two things:
+No git, no `docker`, no edits to existing repos without asking.
 
-- The layered Controller → ResponseCreatorService → Service → Validator →
-  Repository → Mapper → Entity convention (package layout, `Check`
-  defensive checks, exception mapping, test style, Checkstyle) — a
-  proven, strict baseline.
-- A verified inter-service auth/identity-propagation mechanism
-  (`Sqa-Client-Id`, `Sqa-user-id`, `Sqa-Request-Id`, the 3-tier filter
-  chain, `IScopeContext`) and the BFF/proxy client pattern, extracted from
-  reading five real production microservices end-to-end. Where those real
-  services were inconsistent with each other (test style, exception
-  logging, one missing header on one client), `CLAUDE.md` picked the
-  stricter rule rather than copying the inconsistency forward.
+## New service — by hand
 
-Don't loosen either part without flagging it to whoever's reviewing the
-change.
+```bash
+python3 scripts/new_service.py --name invoice --role persistence --domain Invoice --calls identity
+```
+
+```bash
+cd ../invoice && mvn -o verify
+```
+
+`--help` lists every option: `--port`, `--root-package`, `--db`, `--api-prefix`, `--coverage`,
+`--target`, `--no-register`.
+
+## Layout
+
+| Path | What | Copied into a new service |
+|---|---|---|
+| `CLAUDE.md` | architecture rules, always loaded | yes, filled |
+| `.claude/skills/*` | one skill per layer + module checklists | yes |
+| `.claude/skills/inter-service-propagation/platform.md` | registry of every service: host, port, base URI, caller policy | yes |
+| `.claude/agents/*` | creators, test writer, reviewers | yes |
+| `.claude/skills/new-microservice` | orchestration | no, template-only |
+| `skeleton/` | infrastructure code + tests + build/CI files, with placeholders | yes, as the code |
+| `scripts/new_service.py` | instantiation | no |
+| `REFERENCE.md` | what came from identity/artifact and why it changed | no |
+
+## Changing the skeleton
+
+Edit `skeleton/`, then prove it still builds for both roles:
+
+```bash
+python3 scripts/new_service.py --name sandbox --role persistence --domain Demo --calls identity --no-register --target /tmp/sandbox && (cd /tmp/sandbox && mvn -o verify)
+```
+
+Repeat with `--role proxy`, and record the change in `REFERENCE.md`.

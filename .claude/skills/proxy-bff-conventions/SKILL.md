@@ -3,37 +3,17 @@ name: proxy-bff-conventions
 description: Use when building an orchestration/aggregation endpoint that calls other microservices and composes their responses instead of reading/writing local persistence (a BFF-style module).
 ---
 
-Full detail for the proxy/BFF variant of this repo's layering, referenced
-by `CLAUDE.md`'s package layout. Read `CLAUDE.md` first for the
-placeholders and the overall map, and the `inter-service-propagation`
-skill for the header mechanics this section depends on.
+The variant of the layout for a module with **no local persistence** for its data.
 
-## Proxy / BFF services
-
-Use this variant instead of the standard layout when {{ServiceName}} (or
-one of its modules) is an aggregation/orchestration layer with **no local
-persistence** for a given domain — it only calls other services and
-composes their responses.
-
-- `client/<downstream-service>/<DownstreamService>Client.java` — one
-  hand-written `WebClient` wrapper class per downstream service, all
-  extending a shared `client/BaseClient` (shared error-mapping helpers).
-  Every method sets `Sqa-Client-Id` explicitly for extra clarity even
-  though the shared filter also sets it — this is belt-and-suspenders,
-  not a contradiction.
-- The `*ResponseCreatorService` seam (see `service-layer-conventions`) is
-  used **only** where the module has real local persistence. For a pure
-  pass-through module (no local entity): the operation `Service` itself
-  calls the client(s) directly, in whatever order the data dependencies
-  require, and composes the result — don't invent a fake
-  `mapper`/`entity`/`repository` for data that only ever lives in another
-  service.
-- Still apply the Check/Exception/Test rules identically regardless of
-  whether a given module is persistence-backed or pure-proxy — the BFF
-  shape changes where data comes from, not the defensive-coding or
-  testing bar.
-- Long-running downstream operations (e.g. triggering an async pipeline
-  in another service) are handled by client-side polling by default
-  (trigger endpoint returns an id immediately, a second endpoint polls
-  status) — don't reach for WebSocket/SSE unless {{ServiceName}}
-  specifically needs push semantics.
+- One wrapper per downstream: `client/<downstream>/<Downstream>Client extends BaseClient`, base URI
+  from `client.<downstream>.base-uri`, id from `Constants` (`inter-service-propagation`). Only the
+  methods the module uses. Each returns a domain type or an empty `Optional`/list, never a raw
+  `Mono`.
+- No `ResponseCreatorService`, mapper, entity or repository for data that lives elsewhere. The
+  operation `Service` calls the clients in dependency order and composes the result. Partial-failure
+  behavior is explicit: fail the request, or return what's there with the gap marked. Never let a
+  silent empty result stand in for a failure.
+- Response records live in `modules/<domain>/model/`, as in any module.
+- `Check`, exceptions, tests and controller rules apply unchanged.
+- Long-running downstream work: a trigger endpoint returns an id and a status endpoint polls it.
+  No WebSocket or SSE unless asked.

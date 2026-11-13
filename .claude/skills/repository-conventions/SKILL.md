@@ -9,7 +9,8 @@ overall map.
 
 ## Repository layer
 
-- `modules/<domain>/repository/I<Domain>Repository` is a hand-written
+- Root-level and shared across modules — never inside `modules/<domain>/`.
+- `repository/I<Domain>Repository` is a hand-written
   interface with domain-named methods (`findByEntityId`,
   `findPagedList(customerId, status, pageable)`, `existsByEntityId`) — it
   does NOT extend `JpaRepository` directly, so callers never see Spring

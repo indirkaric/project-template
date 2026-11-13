@@ -16,26 +16,28 @@ order, since later steps depend on earlier ones existing. This is for a
 persistence-backed module; if the module is actually a pure
 orchestration/proxy with no local entity, use `new-proxy-module` instead.
 
+Steps 1–6 are root-level and shared; only steps 7–9 go under
+`modules/<domain>/`. Every new package gets a `package-info.java`.
+
 1. `entity/<Entity>.java`
-2. Liquibase changelog adding the table, in
-   `src/main/resources/liquibase/`
-3. `modules/<domain>/repository/I<Domain>Repository` +
-   `repository/impl/<Domain>Repository` (+ `repository/projection/` if the
-   module needs list/detail reads)
+2. Liquibase changeset adding the table, in the current versioned
+   subdirectory of `src/main/resources/liquibase/`, included from
+   `changelog.xml`
+3. `repository/I<Domain>Repository` + `repository/impl/<Domain>Repository`
+   (+ `repository/projection/` if the module needs list/detail reads)
 4. `service/validator/I<Verb><Domain>ServiceValidator` + impl
 5. `service/<domain>/I<Verb><Domain>Service` + impl (one per operation:
    create/modify/delete/read)
-6. `modules/<domain>/mapper/I<Domain>Mapper`
-7. `modules/<domain>/model/` (request/response records) and `dto/`
-   (internal DTOs)
+6. `mapper/I<Domain>Mapper` and `dto/<Domain>DTO`
+7. `modules/<domain>/model/` (request/response/list records)
 8. `modules/<domain>/service/I<Verb><Domain>ResponseCreatorService` + impl
-9. `<Domain>Controller`
+9. `modules/<domain>/<Domain>Controller`
 10. If this service uses the optional Kafka domain-event pattern: reuse
     the existing `DomainEventListener`/`DomainChangeEventListener` for the
     new event type — don't add a second one. Skip entirely if this
     service doesn't need async eventing.
-11. Tests for every class added in steps 3-9, then `mvn test` and
-    `mvn checkstyle:check`.
+11. Tests for every class added in steps 3-9, then `mvn -o verify`
+    (tests + JaCoCo gate) and `mvn -o checkstyle:check`.
 
 This is the same ordering `service-creator` follows when delegated to as a
 subagent. Use this skill instead of that agent when you want to do the

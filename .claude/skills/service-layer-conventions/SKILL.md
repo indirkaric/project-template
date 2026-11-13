@@ -20,11 +20,17 @@ methods. Split into:
 - `I{{Domain}}Service` / `{{Domain}}Service` — read-only queries,
   `@Transactional(readOnly = true)`
 
-Each is `@Service`, a `final` class, constructor injection only, every
-injected dependency validated with `Check.isNotNull(dep, "depName")` inside
-the constructor, and documented with a full `/** ... @param ... */` Javadoc
-block naming every parameter. Write services are `@Transactional` at the
-class level; read services are `@Transactional(readOnly = true)`.
+They live in `service/<domain>/` (interfaces) and `service/<domain>/impl/`
+(implementations) at the root, not inside `modules/`.
+
+Each is `@Service`, constructor injection only, with `private final`
+fields, every injected dependency validated with
+`Check.isNotNull(dep, "depName")` inside the constructor, and documented
+with a full `/** ... @param ... */` Javadoc block naming every parameter.
+Write services are `@Transactional` at the class level; read services are
+`@Transactional(readOnly = true)`. The **class itself is never `final`**:
+`@Transactional` is applied through a CGLIB proxy that must subclass it,
+exactly like the controller-method rule in `controller-conventions`.
 
 ## Validators
 
@@ -40,7 +46,8 @@ class level; read services are `@Transactional(readOnly = true)`.
 
 ## ResponseCreatorService: the only thing the Controller calls
 
-`modules/<domain>/service/I<Verb><Domain>ResponseCreatorService` wires one
+`modules/<domain>/service/I<Verb><Domain>ResponseCreatorService` (impl in
+`modules/<domain>/service/impl/`) wires one
 or two core services together with the mapper and returns the final API
 response model. Example: `Create{{Domain}}ResponseCreatorService` calls
 `ICreate{{Domain}}Service.save(request)` to get an `entityId`, then
@@ -55,6 +62,8 @@ instead.
 
 ## Mapper (MapStruct)
 
+- Root-level `mapper/I<Domain>Mapper.java`, shared by every module that
+  needs it — never a `mapper/` package inside `modules/<domain>/`.
 - One interface per domain: `@Mapper(componentModel = "spring",
   unmappedTargetPolicy = ReportingPolicy.IGNORE)`.
 - Every method has a short Javadoc (`@param`/`@return`).
@@ -67,10 +76,13 @@ instead.
 
 ## DTO vs model
 
-- `model/` = records exposed over the API (`Create{{Domain}}Request`,
-  `{{Domain}}Response`) — validated with `jakarta.validation` annotations,
-  bound with `@Valid @RequestBody`.
-- `dto/` = internal objects built off projections (`{{Domain}}DTO`), used
+- `modules/<domain>/model/` = records exposed over the API
+  (`Create{{Domain}}Request`, `{{Domain}}Response`,
+  `{{Domain}}ListResponse`) — validated with `jakarta.validation`
+  annotations, bound with `@Valid @RequestBody`.
+- Root-level `dto/` = internal objects built off projections
+  (`{{Domain}}DTO`), used
   only between the repository/mapper and the ResponseCreatorService. Never
-  return a `dto` type from a Controller, and never return an `entity` from
+  return a `dto` type from a Controller (the one exception is the shared
+  `dto/response/EntityCreatedResponse`), and never return an `entity` from
   anywhere above the repository.
